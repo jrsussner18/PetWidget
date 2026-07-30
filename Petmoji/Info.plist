@@ -48,18 +48,31 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>So your pet can react when you leave and come back home</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>To detect your home location for pet reactions</string>
+	<string>So your pet can react when you leave and come back home, and so you can optionally prefill your home address</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>To upload photos of your pet for sprite generation</string>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>INSendMessageIntent</string>
 	</array>
+	<key>ONESIGNAL_APP_ID</key>
+	<string>$(ONESIGNAL_APP_ID)</string>
+	<key>POSTHOG_API_KEY</key>
+	<string>$(POSTHOG_API_KEY)</string>
+	<key>POSTHOG_HOST</key>
+	<string>$(POSTHOG_HOST)</string>
+	<key>REVENUECAT_API_KEY</key>
+	<string>$(REVENUECAT_API_KEY)</string>
+	<key>PETMOJI_TERMS_URL</key>
+	<string>$(PETMOJI_TERMS_URL)</string>
+	<key>PETMOJI_PRIVACY_URL</key>
+	<string>$(PETMOJI_PRIVACY_URL)</string>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>fetch</string>
 		<string>location</string>
 		<string>remote-notification</string>
+		<string>fetch</string>
+		<string>processing</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string></string>

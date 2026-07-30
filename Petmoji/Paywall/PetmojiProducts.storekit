@@ -1,0 +1,78 @@
+{
+  "identifier" : "PetmojiProducts",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "29.99",
+      "familyShareable" : false,
+      "internalID" : "A1B2C3D4E5F60718293A4B5C",
+      "localizations" : [
+        {
+          "description" : "One-time purchase for lifetime Petmoji Pro access.",
+          "displayName" : "Petmoji Pro Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "petmoji_pro_lifetime",
+      "referenceName" : "Petmoji Pro Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "0",
+    "_developerTeamID" : "N8SACG5845",
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "D4E5F6A7B8C90123456789AB",
+      "localizations" : [
+
+      ],
+      "name" : "Petmoji Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "E5F6A7B8C9D0123456789ABC",
+          "introductoryOffer" : {
+            "displayPrice" : "0",
+            "internalID" : "F6A7B8C9D0E123456789ABCD",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "Monthly access to Petmoji Pro features.",
+              "displayName" : "Petmoji Pro Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "petmoji_pro_monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Petmoji Pro Monthly",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

@@ -22,6 +22,9 @@ struct PetHomeView: View {
     @State private var showAddPetConfirm = false
     @State private var didShowResumePrompt = false
     @State private var declinedResumeOnce = false
+    #if DEBUG
+    @State private var showPaywallDebug = false
+    #endif
     @AppStorage("petHomeExpandedPetIDs") private var expandedPetIDsRaw = ""
 
     private var pets: [Pet] { appState.availablePets }
@@ -55,7 +58,12 @@ struct PetHomeView: View {
                         petCount: pets.count,
                         canAddPet: appState.canAddPet,
                         onAddPet: handleAddPetTapped,
-                        onShowSettings: { showSettings = true }
+                        onShowSettings: { showSettings = true },
+                        onShowPaywallDebug: {
+                            #if DEBUG
+                            showPaywallDebug = true
+                            #endif
+                        }
                     )
                     .padding(.horizontal, horizontalInset)
 
@@ -95,6 +103,10 @@ struct PetHomeView: View {
                                                     appState.selectPet(pet)
                                                     selectedPetForChatRoom = pet
                                                     showChatRoom = true
+                                                    AnalyticsService.capture(
+                                                        AnalyticsEvent.chatOpened,
+                                                        properties: ["pet_id": pet.id.uuidString]
+                                                    )
                                                 },
                                                 onSpriteAppeared: { scheduleHeroBreathe(for: pet.id) }
                                             )
@@ -140,6 +152,17 @@ struct PetHomeView: View {
             .environment(\.petmojiPalette, PetmojiPalette.palette(for: appState.visualStyle))
             .preferredColorScheme(appState.visualStyle == .widgetGlass ? .dark : .light)
         }
+        #if DEBUG
+        .fullScreenCover(isPresented: $showPaywallDebug) {
+            PaywallView(
+                onUnlocked: { showPaywallDebug = false },
+                allowsAutoUnlock: false
+            )
+            .environmentObject(appState)
+            .environment(\.petmojiPalette, PetmojiPalette.palette(for: appState.visualStyle))
+            .preferredColorScheme(appState.visualStyle == .widgetGlass ? .dark : .light)
+        }
+        #endif
         .navigationDestination(isPresented: $showChatRoom) {
             if let pet = selectedPetForChatRoom {
                 PetChatRoomView(pet: pet)
@@ -240,6 +263,10 @@ struct PetHomeView: View {
             setExpanded(true, for: selected.id)
             selectedPetForChatRoom = selected
             showChatRoom = true
+            AnalyticsService.capture(
+                AnalyticsEvent.chatOpened,
+                properties: ["pet_id": selected.id.uuidString]
+            )
         }
     }
 
@@ -384,6 +411,7 @@ private struct HomeHeader: View {
     let canAddPet: Bool
     let onAddPet: () -> Void
     let onShowSettings: () -> Void
+    var onShowPaywallDebug: (() -> Void)? = nil
 
     private var checkInText: String {
         if petCount == 1 {
@@ -408,6 +436,15 @@ private struct HomeHeader: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 8) {
+                #if DEBUG
+                if let onShowPaywallDebug {
+                    HomeChromeIconButton(
+                        systemName: "creditcard.fill",
+                        accessibilityLabel: "debug paywall",
+                        action: onShowPaywallDebug
+                    )
+                }
+                #endif
                 if canAddPet {
                     HomeChromeIconButton(
                         systemName: "plus",

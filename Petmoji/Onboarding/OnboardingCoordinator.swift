@@ -42,6 +42,7 @@ struct OnboardingCoordinator: View {
         case spriteReveal
         case widgetSetup
         case locationTracking
+        case paywall
     }
 
     private var pendingPetId: UUID? {
@@ -141,12 +142,35 @@ struct OnboardingCoordinator: View {
                 case .locationTracking:
                     HomeLocationSetupView(
                         pet: draft.completedPet,
-                        onDone: finishOnboarding,
+                        onDone: {
+                            if SubscriptionConfig.isPaywallEnabled {
+                                path.append(.paywall)
+                                persistProgress(topStep: .paywall)
+                            } else {
+                                finishOnboarding()
+                            }
+                        },
                         onCancel: additionalPetCancelAction
                     )
                     .navigationBarBackButtonHidden(true)
                     .onAppear {
                         persistProgress(topStep: .locationTracking)
+                    }
+
+                case .paywall:
+                    Group {
+                        if SubscriptionConfig.isPaywallEnabled {
+                            PaywallView(onUnlocked: finishOnboarding)
+                        } else {
+                            Color.clear
+                                .onAppear { finishOnboarding() }
+                        }
+                    }
+                    .navigationBarBackButtonHidden(true)
+                    .onAppear {
+                        if SubscriptionConfig.isPaywallEnabled {
+                            persistProgress(topStep: .paywall)
+                        }
                     }
                 }
             }
@@ -264,6 +288,7 @@ struct OnboardingCoordinator: View {
         }
         OnboardingDraftStore.clear()
         appState.setHasCompletedOnboarding(true)
+        AnalyticsService.capture(AnalyticsEvent.onboardingCompleted)
     }
 }
 

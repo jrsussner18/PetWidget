@@ -39,6 +39,12 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: "2.0.0"
+  OneSignalSDK:
+    url: https://github.com/OneSignal/OneSignal-XCFramework
+    from: "5.2.0"
+  PostHog:
+    url: https://github.com/PostHog/posthog-ios.git
+    from: "3.59.3"
 
 targets:
   Petmoji:
@@ -60,7 +66,7 @@ targets:
         NSPhotoLibraryUsageDescription: "To upload photos of your pet for sprite generation"
         NSCameraUsageDescription: "To take photos of your pet for sprite generation"
         NSLocationAlwaysAndWhenInUseUsageDescription: "So your pet can react when you leave and come back home"
-        NSLocationWhenInUseUsageDescription: "To detect your home location for pet reactions"
+        NSLocationWhenInUseUsageDescription: "So your pet can react when you leave and come back home, and so you can optionally prefill your home address"
         UIBackgroundModes:
           - fetch
           - location
@@ -71,19 +77,40 @@ targets:
           - CFBundleURLName: com.petmoji.app
             CFBundleURLSchemes:
               - petmoji
+        ONESIGNAL_APP_ID: $(ONESIGNAL_APP_ID)
+        POSTHOG_API_KEY: $(POSTHOG_API_KEY)
+        POSTHOG_HOST: $(POSTHOG_HOST)
     entitlements:
       path: Petmoji/Petmoji.entitlements
       properties:
         com.apple.security.application-groups:
           - group.com.petmoji.app
-        aps-environment: development
+        com.apple.developer.usernotifications.communication: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.petmoji.app
         INFOPLIST_FILE: Petmoji/Info.plist
+        ONESIGNAL_APP_ID: 50232d9c-b355-4208-86ba-d36d7da3dee7
+        POSTHOG_API_KEY: ""
+        POSTHOG_HOST: "https://us.i.posthog.com"
+        PETMOJI_TERMS_URL: "https://pastoral-supply-662.notion.site/Terms-of-Service-for-Petmoji-39f2cec59ddf800d9effe270d79ad394"
+        PETMOJI_PRIVACY_URL: "https://pastoral-supply-662.notion.site/Privacy-Policy-for-Petmoji-39f2cec59ddf80a8a5b8e2c7f5d6d379"
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: Petmoji/Petmoji.entitlements
+          PRODUCT_BUNDLE_IDENTIFIER: com.hilollcpetmoji.app
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Petmoji/Petmoji-Release.entitlements
+          PRODUCT_BUNDLE_IDENTIFIER: com.hilollc.petmoji.app
+          ONESIGNAL_APP_ID: 50232d9c-b355-4208-86ba-d36d7da3dee7
+
     dependencies:
       - package: Supabase
         product: Supabase
+      - package: OneSignalSDK
+        product: OneSignalFramework
+      - package: PostHog
+        product: PostHog
       - target: PetmojiWidget
         embed: true
 

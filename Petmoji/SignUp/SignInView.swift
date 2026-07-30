@@ -218,6 +218,7 @@ struct SignInView: View {
         do {
             _ = try await supabase.verifyEmailOTP(email: trimmedEmail, token: otpCode)
             await appState.restoreAuthenticatedSession(showLoading: false)
+            AnalyticsService.capture(AnalyticsEvent.signInCompleted)
         } catch {
             authError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }

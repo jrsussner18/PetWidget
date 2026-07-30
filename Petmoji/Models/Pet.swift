@@ -16,6 +16,7 @@ struct Pet: Codable, Identifiable, Equatable {
     var baseMood: BaseMood
     var homeLat: Double?
     var homeLng: Double?
+    var homeAddress: String?
     var timezone: String
     let createdAt: Date
 
@@ -32,6 +33,7 @@ struct Pet: Codable, Identifiable, Equatable {
         case baseMood = "base_mood"
         case homeLat = "home_lat"
         case homeLng = "home_lng"
+        case homeAddress = "home_address"
         case timezone
         case createdAt = "created_at"
     }
@@ -50,6 +52,7 @@ struct Pet: Codable, Identifiable, Equatable {
         baseMood: BaseMood,
         homeLat: Double?,
         homeLng: Double?,
+        homeAddress: String? = nil,
         timezone: String,
         createdAt: Date
     ) {
@@ -66,6 +69,7 @@ struct Pet: Codable, Identifiable, Equatable {
         self.baseMood = baseMood
         self.homeLat = homeLat
         self.homeLng = homeLng
+        self.homeAddress = homeAddress
         self.timezone = timezone
         self.createdAt = createdAt
     }
@@ -88,6 +92,7 @@ struct Pet: Codable, Identifiable, Equatable {
         baseMood = try container.decode(BaseMood.self, forKey: .baseMood)
         homeLat = try container.decodeIfPresent(Double.self, forKey: .homeLat)
         homeLng = try container.decodeIfPresent(Double.self, forKey: .homeLng)
+        homeAddress = try container.decodeIfPresent(String.self, forKey: .homeAddress)
         timezone = try container.decode(String.self, forKey: .timezone)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
 
@@ -111,6 +116,7 @@ struct Pet: Codable, Identifiable, Equatable {
         try container.encode(baseMood, forKey: .baseMood)
         try container.encodeIfPresent(homeLat, forKey: .homeLat)
         try container.encodeIfPresent(homeLng, forKey: .homeLng)
+        try container.encodeIfPresent(homeAddress, forKey: .homeAddress)
         try container.encode(timezone, forKey: .timezone)
         try container.encode(createdAt, forKey: .createdAt)
     }

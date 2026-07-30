@@ -5,12 +5,16 @@ import UserNotifications
 // MARK: - Delivers generated pet messages to widget + notifications
 
 enum PetMessageDelivery {
-    /// Writes the latest message to the widget snapshot, chat history, and posts a user-visible notification.
+    /// Writes the latest message to the widget snapshot, chat history, and optionally posts a local notification.
+    /// Skip local notification when OneSignal already displayed a visible alert (avoids duplicates).
     @MainActor
-    static func deliver(pet: Pet, message: PetMessage) {
+    static func deliver(pet: Pet, message: PetMessage, postLocalNotification: Bool = true) {
+        UserDefaults.standard.set(message.id.uuidString, forKey: PushNotificationHandler.lastDeliveredMessageIdKey)
         ChatHistoryStore.appendPetMessage(message)
         WidgetSnapshotSync.writeFromPet(pet, message: message)
-        postNotification(pet: pet, message: message)
+        if postLocalNotification {
+            postNotification(pet: pet, message: message)
+        }
         NotificationCenter.default.post(
             name: .petMessageDelivered,
             object: nil,
@@ -22,8 +26,10 @@ enum PetMessageDelivery {
     @MainActor
     static func refreshWidgetFromServer() async {
         let defaults = UserDefaults(suiteName: WidgetSnapshotSync.appGroupSuiteName)
-        guard let raw = defaults?.string(forKey: WidgetSnapshotSync.Keys.petId),
-              let petId = UUID(uuidString: raw) else { return }
+        let raw = defaults?.string(forKey: WidgetSnapshotSync.Keys.petId)
+            ?? defaults?.string(forKey: WidgetSnapshotSync.Keys.legacyPetId)
+            ?? UserDefaults.standard.string(forKey: MockUserSettings.Keys.widgetPetId)
+        guard let raw, let petId = UUID(uuidString: raw) else { return }
 
         await ChatHistoryStore.mergeServerMessages(for: petId)
 

@@ -51,4 +51,23 @@ enum MockUserSettings {
     static func logVerbose(_ message: @autoclosure () -> String) {
         // Verbose logging disabled (no settings toggle).
     }
+
+    /// Wipes on-device prefs after sign-out, account deletion, or invalid session restore.
+    static func clearAllPersistedState() {
+        let d = UserDefaults.standard
+        d.removeObject(forKey: Keys.persona)
+        d.removeObject(forKey: Keys.displayName)
+        d.removeObject(forKey: Keys.email)
+        d.removeObject(forKey: Keys.phone)
+        d.removeObject(forKey: Keys.signupCompleted)
+        d.removeObject(forKey: Keys.onboardingCompleted)
+        d.removeObject(forKey: Keys.hasSeenWelcome)
+        d.removeObject(forKey: Keys.widgetPetId)
+        d.removeObject(forKey: Keys.locationTrackingEnabled)
+        d.removeObject(forKey: Keys.darkMode)
+        d.removeObject(forKey: legacyVisualStyleKey)
+        d.removeObject(forKey: "notifications_enabled")
+        d.removeObject(forKey: "petHomeExpandedPetIDs")
+        d.removeObject(forKey: "last_delivered_message_id")
+    }
 }

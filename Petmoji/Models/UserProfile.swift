@@ -2,17 +2,36 @@ import Foundation
 
 // MARK: - User profile (public.profiles)
 
-struct UserProfile: Codable, Identifiable, Equatable {
+struct UserProfile: Decodable, Identifiable, Equatable {
     let id: UUID
     var fullName: String
     var email: String
     var phone: String?
+    var notificationsEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
         case fullName = "full_name"
         case email
         case phone
+        case notificationsEnabled = "notifications_enabled"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        fullName = try container.decode(String.self, forKey: .fullName)
+        email = try container.decode(String.self, forKey: .email)
+        phone = try container.decodeIfPresent(String.self, forKey: .phone)
+        notificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? true
+    }
+
+    init(id: UUID, fullName: String, email: String, phone: String?, notificationsEnabled: Bool = true) {
+        self.id = id
+        self.fullName = fullName
+        self.email = email
+        self.phone = phone
+        self.notificationsEnabled = notificationsEnabled
     }
 }
 

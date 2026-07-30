@@ -357,6 +357,14 @@ struct ExpressionRevealView: View {
             }
             generationState = .done
             markSpriteRevealReady()
+            AnalyticsService.capture(
+                AnalyticsEvent.spritesGenerated,
+                properties: [
+                    "source": "onboarding",
+                    "pet_id": pet.id.uuidString,
+                    "species": draft.species.rawValue,
+                ]
+            )
 
             // Start polling for the remaining 5 expressions written by Stage B.
             startExpressionSync(petId: pet.id)
@@ -493,6 +501,13 @@ struct ExpressionRevealView: View {
                     appState.setPet(latest)
                     appState.startSyncingExpressions(petId: latest.id)
                 }
+                AnalyticsService.capture(
+                    AnalyticsEvent.petCreated,
+                    properties: [
+                        "pet_id": latest.id.uuidString,
+                        "is_additional_pet": context.isAdditionalPet,
+                    ]
+                )
                 onComplete(latest)
             }
         }

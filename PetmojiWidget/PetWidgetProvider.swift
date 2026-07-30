@@ -93,7 +93,8 @@ struct PetWidgetProvider: TimelineProvider {
         let complete = PetWidgetTimelineCompletion(completion)
         Task {
             let entry = await Self.loadEntry()
-            let nextUpdate = Calendar.current.date(byAdding: .hour, value: 2, to: entry.date) ?? entry.date
+            // Short fallback so a missed reloadAllTimelines still picks up app-group writes soon.
+            let nextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: entry.date) ?? entry.date
             complete(Timeline(entries: [entry], policy: .after(nextUpdate)))
         }
     }
@@ -103,15 +104,23 @@ struct PetWidgetProvider: TimelineProvider {
     /// Static helpers avoid capturing `self` in `Task`'s `@Sendable` closure (Swift 6).
     private nonisolated static func loadEntry() async -> PetWidgetEntry {
         let defaults = UserDefaults(suiteName: appGroupSuiteName)
-        guard let name    = defaults?.string(forKey: "pet_name"),
+        guard let name = defaults?.string(forKey: "pet_name"),
               let message = defaults?.string(forKey: "widget_message") else {
             return .placeholder
         }
 
         let expressionStr = defaults?.string(forKey: "widget_expression") ?? "happy"
-        let spriteURL     = defaults?.string(forKey: "widget_sprite_url")
-        let petId         = defaults?.string(forKey: "widget_pet_id").flatMap(UUID.init(uuidString:))
-        let imageData     = await Self.downloadImageData(from: spriteURL)
+        let spriteURL = defaults?.string(forKey: "widget_sprite_url")
+        let petId = defaults?.string(forKey: "widget_pet_id").flatMap(UUID.init(uuidString:))
+            ?? defaults?.string(forKey: "pet_id").flatMap(UUID.init(uuidString:))
+
+        // Prefer the app-group sprite cache written by the main app (reliable); fall back to network.
+        let imageData: Data?
+        if let cached = Self.cachedSpriteData(matching: spriteURL) {
+            imageData = cached
+        } else {
+            imageData = await Self.downloadImageData(from: spriteURL)
+        }
         let fitScale: CGFloat = {
             guard let imageData, let image = UIImage(data: imageData) else { return 0.88 }
             return image.widgetContentFitScale()
@@ -127,6 +136,18 @@ struct PetWidgetProvider: TimelineProvider {
             message: message,
             expression: WidgetExpression(from: expressionStr)
         )
+    }
+
+    private nonisolated static func cachedSpriteData(matching urlString: String?) -> Data? {
+        guard let urlString else { return nil }
+        let defaults = UserDefaults(suiteName: appGroupSuiteName)
+        guard defaults?.string(forKey: "widget_sprite_cache_url") == urlString,
+              let container = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: appGroupSuiteName
+              ) else { return nil }
+        let fileURL = container.appendingPathComponent("widget_latest_sprite.img", isDirectory: false)
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return nil }
+        return data
     }
 
     private nonisolated static func downloadImageData(from urlString: String?) async -> Data? {

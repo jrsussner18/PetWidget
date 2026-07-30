@@ -21,34 +21,24 @@ final class MessageScheduler {
 
     func requestNotificationPermission() async -> Bool {
         let settings = await center.notificationSettings()
+        if settings.authorizationStatus == .authorized {
+            PushNotificationService.registerForRemoteNotificationsIfAuthorized()
+            return true
+        }
         guard settings.authorizationStatus == .notDetermined else {
-            let authorized = settings.authorizationStatus == .authorized
-            // Already decided — make sure we have a fresh APNs token for the server to push to.
-            if authorized { registerForRemoteNotifications() }
-            return authorized
+            return false
         }
         let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-        // Obtaining the APNs device token requires an explicit registration call; without it
-        // `didRegisterForRemoteNotificationsWithDeviceToken` never fires and no token is stored,
-        // so the server has nothing to send a push to.
-        if granted { registerForRemoteNotifications() }
+        if granted {
+            PushNotificationService.registerForRemoteNotificationsIfAuthorized()
+        }
         return granted
     }
 
-    /// Registers with APNs for a device token when the user has already authorized notifications.
-    /// Safe to call on every foreground — APNs tokens can rotate, and re-registering refreshes them.
+    /// Registers with APNs / OneSignal when the user has already authorized notifications.
+    /// Safe to call on every foreground — tokens can rotate.
     func registerForPushIfAuthorized() async {
-        let settings = await center.notificationSettings()
-        switch settings.authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            registerForRemoteNotifications()
-        default:
-            break
-        }
-    }
-
-    private func registerForRemoteNotifications() {
-        UIApplication.shared.registerForRemoteNotifications()
+        PushNotificationService.registerForRemoteNotificationsIfAuthorized()
     }
 
     // MARK: - Been gone follow-ups (AI messages via background refresh at ~2h / ~6h)
@@ -74,4 +64,3 @@ final class MessageScheduler {
         WidgetCenter.shared.reloadAllTimelines()
     }
 }
-

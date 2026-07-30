@@ -7,6 +7,8 @@ import WidgetKit
 enum HomeLocationError: LocalizedError {
     case permissionDenied
     case locationUnavailable
+    case geocodeFailed
+    case addressUnresolved
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +16,10 @@ enum HomeLocationError: LocalizedError {
             return "Location access is required to set your home. Enable it in Settings."
         case .locationUnavailable:
             return "Couldn't get your current location. Try again in a moment."
+        case .geocodeFailed:
+            return "Couldn't look up that location. Try a different address."
+        case .addressUnresolved:
+            return "Pick an address from the suggestions, then confirm."
         }
     }
 }
@@ -47,6 +53,19 @@ final class LocationService: NSObject, ObservableObject {
         isLocationTrackingEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: MockUserSettings.Keys.locationTrackingEnabled)
         applyLocationTrackingState()
+    }
+
+    /// Clears home geofence + app-group location metadata (sign-out / reset).
+    func clearPersistedLocationData() {
+        for region in manager.monitoredRegions {
+            manager.stopMonitoring(for: region)
+        }
+        homeRegion = nil
+        sharedDefaults?.removeObject(forKey: "home_lat")
+        sharedDefaults?.removeObject(forKey: "home_lng")
+        sharedDefaults?.removeObject(forKey: "departure_time")
+        sharedDefaults?.removeObject(forKey: MessageScheduler.petIdKey)
+        sharedDefaults?.removeObject(forKey: MessageScheduler.petNameKey)
     }
 
     private static func loadLocationTrackingEnabled() -> Bool {
@@ -102,38 +121,70 @@ final class LocationService: NSObject, ObservableObject {
         _ = await MessageScheduler.shared.requestNotificationPermission()
     }
 
-    // MARK: - Home setup (GPS → Supabase → geofence)
+    // MARK: - Home setup (confirmed address → Supabase → geofence)
 
-    /// Captures current GPS, saves to pet row, starts geofence, then optionally prompts for Always.
-    func saveCurrentLocationAsHome(
+    /// Saves a user-confirmed home address + coordinates, starts geofence, optionally prompts for Always.
+    func saveResolvedHome(
         petId: UUID,
         petName: String,
+        address: String,
+        lat: Double,
+        lng: Double,
         requestPermissions: Bool = true,
-        onPetHomeUpdated: ((Double, Double) -> Void)? = nil
+        onPetHomeUpdated: ((Double, Double, String) -> Void)? = nil
     ) async throws {
-        try await ensureWhenInUseAuthorized()
-        let location = try await fetchCurrentLocation()
-        let lat = location.coordinate.latitude
-        let lng = location.coordinate.longitude
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw HomeLocationError.addressUnresolved }
 
-        try await SupabaseService.shared.updatePetHomeLocation(petId: petId, lat: lat, lng: lng)
+        try await SupabaseService.shared.updatePetHomeLocation(
+            petId: petId,
+            lat: lat,
+            lng: lng,
+            address: trimmed
+        )
         if !isLocationTrackingEnabled {
             setLocationTrackingEnabled(true)
         }
         setHomeLocation(lat: lat, lng: lng)
         MessageScheduler.shared.savePetMetadata(name: petName, petId: petId.uuidString)
-        onPetHomeUpdated?(lat, lng)
+        onPetHomeUpdated?(lat, lng, trimmed)
 
         if requestPermissions {
             _ = await MessageScheduler.shared.requestNotificationPermission()
 
-            if authorizationStatus == .notDetermined {
-                requestAlwaysPermission()
-            } else if authorizationStatus == .authorizedWhenInUse {
+            if authorizationStatus == .notDetermined || authorizationStatus == .authorizedWhenInUse {
                 requestAlwaysPermission()
             }
         }
         configureBackgroundLocationIfAuthorized()
+    }
+
+    /// Reverse-geocodes the device's current GPS into a display address + coordinates for editable prefill.
+    func reverseGeocodeCurrentLocation() async throws -> ResolvedHomeAddress {
+        try await ensureWhenInUseAuthorized()
+        let location = try await fetchCurrentLocation()
+        let placemarks = try await CLGeocoder().reverseGeocodeLocation(location)
+        guard let placemark = placemarks.first else {
+            throw HomeLocationError.geocodeFailed
+        }
+        let line = [
+            [placemark.subThoroughfare, placemark.thoroughfare]
+                .compactMap { $0 }
+                .joined(separator: " "),
+            placemark.locality,
+            placemark.administrativeArea,
+            placemark.postalCode,
+        ]
+        .map { $0?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+        .filter { !$0.isEmpty }
+        .joined(separator: ", ")
+
+        guard !line.isEmpty else { throw HomeLocationError.geocodeFailed }
+        return ResolvedHomeAddress(
+            displayAddress: line,
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude
+        )
     }
 
     /// Restores geofence from server pet row (e.g. after sign-in or reinstall).

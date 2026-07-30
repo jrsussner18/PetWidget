@@ -42,6 +42,12 @@ struct ChatHistoryStore {
         UserDefaults.standard.removeObject(forKey: historyKey(for: petId))
     }
 
+    static func clearAllHistories() {
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(keyPrefix) {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
     static func chatMessage(from message: PetMessage) -> ChatMessage {
         ChatMessage(
             id: message.id,

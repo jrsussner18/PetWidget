@@ -33,6 +33,34 @@ final class SupabaseService: @unchecked Sendable {
         (try? await client.auth.session) != nil
     }
 
+    /// Confirms the Keychain session is still valid on the server (not deleted / expired).
+    func validatePersistedSession() async -> UUID? {
+        guard (try? await client.auth.session) != nil else { return nil }
+        do {
+            let user = try await client.auth.user()
+            return user.id
+        } catch {
+            try? await client.auth.signOut(scope: .global)
+            return nil
+        }
+    }
+
+    static func isAuthError(_ error: Error) -> Bool {
+        if error is SignUpAuthError {
+            switch error as? SignUpAuthError {
+            case .noSession, .invalidCredentials, .invalidOTP, .expiredOTP:
+                return true
+            default:
+                return false
+            }
+        }
+        let message = error.localizedDescription.lowercased()
+        return message.contains("jwt")
+            || message.contains("session")
+            || message.contains("not authenticated")
+            || message.contains("invalid login")
+    }
+
     func requireUserId() async throws -> UUID {
         do {
             return try await currentUserId()
@@ -119,6 +147,15 @@ final class SupabaseService: @unchecked Sendable {
             .execute()
     }
 
+    func updateNotificationsEnabled(_ enabled: Bool) async throws {
+        let userId = try await currentUserId()
+        try await client
+            .from("profiles")
+            .update(["notifications_enabled": enabled])
+            .eq("id", value: userId.uuidString)
+            .execute()
+    }
+
     // MARK: - Pet CRUD
 
     func fetchCurrentPet() async throws -> Pet? {
@@ -191,10 +228,20 @@ final class SupabaseService: @unchecked Sendable {
             .execute()
     }
 
-    func updatePetHomeLocation(petId: UUID, lat: Double, lng: Double) async throws {
+    func updatePetHomeLocation(petId: UUID, lat: Double, lng: Double, address: String?) async throws {
+        struct HomeLocationUpdate: Encodable {
+            let home_lat: Double
+            let home_lng: Double
+            let home_address: String?
+        }
+        let trimmed = address?.trimmingCharacters(in: .whitespacesAndNewlines)
         try await client
             .from("pets")
-            .update(["home_lat": lat, "home_lng": lng])
+            .update(HomeLocationUpdate(
+                home_lat: lat,
+                home_lng: lng,
+                home_address: (trimmed?.isEmpty == false) ? trimmed : nil
+            ))
             .eq("id", value: petId.uuidString)
             .execute()
     }
@@ -221,6 +268,17 @@ final class SupabaseService: @unchecked Sendable {
             .eq("pet_id", value: petId.uuidString)
             .not("sent_at", operator: .is, value: "null")
             .order("sent_at", ascending: false)
+            .limit(1)
+            .execute()
+            .value
+        return messages.first
+    }
+
+    func fetchMessage(by id: UUID) async throws -> PetMessage? {
+        let messages: [PetMessage] = try await client
+            .from("messages")
+            .select()
+            .eq("id", value: id.uuidString)
             .limit(1)
             .execute()
             .value

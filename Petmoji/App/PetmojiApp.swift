@@ -33,6 +33,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, @MainActor UNUserNotificatio
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        PushNotificationService.configure(launchOptions: launchOptions)
+        SubscriptionService.configure()
+        AnalyticsService.configure()
         BeenGoneBackgroundScheduler.registerHandlers()
         return true
     }
@@ -57,35 +60,41 @@ class AppDelegate: NSObject, UIApplicationDelegate, @MainActor UNUserNotificatio
         print("APNs registration failed: \(error)")
     }
 
-    // Handle silent push → reload widget
+    // Handle silent push → fetch message and deliver with avatar
     func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        Task {
-            await refreshWidgetData()
-            completionHandler(.newData)
+        Task { @MainActor in
+            let result = await PushNotificationHandler.handle(userInfo: userInfo)
+            completionHandler(result)
         }
     }
 
-    @MainActor
-    private func refreshWidgetData() async {
-        await PetMessageDelivery.refreshWidgetFromServer()
-    }
-
     // A push arriving while the app is in the foreground only triggers `willPresent`
-    // (not `didReceiveRemoteNotification`), so refresh the widget here too — otherwise the
-    // widget stays stale until the app is next backgrounded/foregrounded.
+    // (not `didReceiveRemoteNotification`), so deliver/refresh the widget here too.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         Task { @MainActor in
-            await PetMessageDelivery.refreshWidgetFromServer()
+            _ = await PushNotificationHandler.handle(userInfo: notification.request.content.userInfo)
         }
         completionHandler([.banner, .sound, .list])
+    }
+
+    // Tapping a notification must also refresh the widget — background wake is not guaranteed.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        Task { @MainActor in
+            _ = await PushNotificationHandler.handle(userInfo: response.notification.request.content.userInfo)
+            completionHandler()
+        }
     }
 }
 
@@ -220,7 +229,10 @@ struct RootView: View {
             } else {
                 AuthCoordinator()
             }
-        } else if appState.isAuthenticated, !appState.pets.isEmpty, appState.hasCompletedOnboarding {
+        } else if appState.isAuthenticated, appState.hasCompletedOnboarding, SubscriptionConfig.isPaywallEnabled, !appState.isPro {
+            PaywallView(onUnlocked: {})
+        } else if appState.isAuthenticated, !appState.pets.isEmpty, appState.hasCompletedOnboarding,
+                  !SubscriptionConfig.isPaywallEnabled || appState.isPro {
             NavigationStack {
                 PetHomeView()
             }
@@ -475,6 +487,7 @@ final class AppState: ObservableObject {
     @Published var hasCompletedSignUp: Bool = false
     @Published var hasCompletedOnboarding: Bool = false
     @Published var hasSeenWelcome: Bool = false
+    @Published private(set) var isPro: Bool = false
     @Published var userDisplayName: String = ""
     @Published var userEmail: String = ""
     @Published var userPhone: String = ""
@@ -586,12 +599,22 @@ final class AppState: ObservableObject {
 
     func bootstrap() async {
         defer { isBootstrapping = false }
-        if await supabase.restoreSessionIfPresent() {
-            isAuthenticated = true
-            await restoreAuthenticatedSession()
-        } else {
+        guard await supabase.validatePersistedSession() != nil else {
+            clearAllPersistedUserData()
             applyUnauthenticatedState()
+            return
         }
+        isAuthenticated = true
+        await restoreAuthenticatedSession()
+    }
+
+    private func clearAllPersistedUserData() {
+        MockUserSettings.clearAllPersistedState()
+        ChatHistoryStore.clearAllHistories()
+        OnboardingDraftStore.clear()
+        WidgetSnapshotSync.clear()
+        LocationService.shared.clearPersistedLocationData()
+        MessageScheduler.shared.cancelBeenGoneNotifications()
     }
 
     /// Clears in-memory app data when there is no Supabase session (stale UserDefaults must not unlock the app).
@@ -600,8 +623,14 @@ final class AppState: ObservableObject {
         stopSyncingExpressions()
         currentPet = nil
         pets = []
-        setWidgetPetId(nil)
+        widgetPetId = nil
         setHasCompletedSignUp(false)
+        setHasCompletedOnboarding(false)
+        setHasSeenWelcome(false)
+        isPro = false
+        setUserDisplayName("")
+        setUserEmail("")
+        setUserPhone("")
     }
 
     /// After sign-in or session restore: fetch pets first (routes to home when present), then profile cache.
@@ -609,6 +638,47 @@ final class AppState: ObservableObject {
         isAuthenticated = true
         await loadPets(showLoading: showLoading)
         await hydrateFromProfile()
+
+        // Keychain session can outlive UserDefaults (e.g. TestFlight reinstall). Without a
+        // profile or sign-up flag, don't treat orphan pets as a logged-in user.
+        let hasProfile = (try? await supabase.fetchProfile()) != nil
+        if !hasCompletedSignUp && !hasProfile {
+            if pets.isEmpty {
+                setHasCompletedOnboarding(false)
+            } else {
+                await signOut()
+                return
+            }
+        }
+
+        if let userId = try? await supabase.currentUserId() {
+            PushNotificationService.login(userId: userId)
+            await SubscriptionService.logIn(userId: userId)
+            AnalyticsService.identify(
+                userId: userId,
+                email: userEmail.isEmpty ? nil : userEmail,
+                name: userDisplayName.isEmpty ? nil : userDisplayName
+            )
+        }
+        await refreshSubscriptionStatus()
+    }
+
+    func applyProStatus(_ active: Bool) {
+        isPro = active
+    }
+
+    func refreshSubscriptionStatus() async {
+        guard SubscriptionConfig.isPaywallEnabled else {
+            applyProStatus(true)
+            return
+        }
+        do {
+            let info = try await SubscriptionService.refreshCustomerInfo()
+            applyProStatus(SubscriptionService.isPro(from: info))
+            AnalyticsService.trackSubscriptionPeriod(from: info)
+        } catch {
+            print("[AppState] refreshSubscriptionStatus failed: \(error.localizedDescription)")
+        }
     }
 
     func hydrateFromProfile() async {
@@ -639,6 +709,13 @@ final class AppState: ObservableObject {
         setUserDisplayName(name)
         setUserEmail(email)
         setHasCompletedSignUp(true)
+        if let userId = try? await supabase.currentUserId() {
+            PushNotificationService.login(userId: userId)
+            await SubscriptionService.logIn(userId: userId)
+            AnalyticsService.identify(userId: userId, email: email, name: name)
+        }
+        AnalyticsService.capture(AnalyticsEvent.signUpCompleted)
+        await refreshSubscriptionStatus()
     }
 
     func loadPets(showLoading: Bool = true) async {
@@ -655,7 +732,9 @@ final class AppState: ObservableObject {
                 currentPet = fetched.first
             }
             resolveWidgetPetId()
-            if !fetched.isEmpty, OnboardingDraftStore.load()?.context != .firstPet {
+            if !fetched.isEmpty,
+               OnboardingDraftStore.load()?.context != .firstPet,
+               hasCompletedOnboarding || hasCompletedSignUp {
                 setHasCompletedOnboarding(true)
             }
             if let displayable = displayablePets.first(where: { $0.id == currentPet?.id }) {
@@ -667,7 +746,12 @@ final class AppState: ObservableObject {
             await syncWidgetSnapshot()
             await PetMessageDelivery.refreshWidgetFromServer()
         } catch {
-            // No pets yet — show onboarding
+            pets = []
+            currentPet = nil
+            setWidgetPetId(nil)
+            if SupabaseService.isAuthError(error) {
+                await signOut()
+            }
         }
     }
 
@@ -745,15 +829,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    func updateCurrentPetHome(lat: Double, lng: Double) {
+    func updateCurrentPetHome(lat: Double, lng: Double, address: String?) {
         guard let petId = currentPet?.id else { return }
-        updatePetHome(petId: petId, lat: lat, lng: lng)
+        updatePetHome(petId: petId, lat: lat, lng: lng, address: address)
     }
 
-    func updatePetHome(petId: UUID, lat: Double, lng: Double) {
+    func updatePetHome(petId: UUID, lat: Double, lng: Double, address: String?) {
         guard var pet = pets.first(where: { $0.id == petId }) else { return }
         pet.homeLat = lat
         pet.homeLng = lng
+        pet.homeAddress = address
         mergePet(pet)
         if currentPet?.id == petId {
             syncHomeGeofenceFromCurrentPet()
@@ -797,6 +882,7 @@ final class AppState: ObservableObject {
         try? await supabase.deletePet(petId: pet.id)
         ChatHistoryStore.clearHistory(for: pet.id)
         removePetLocally(petId: pet.id)
+        AnalyticsService.capture(AnalyticsEvent.petDeleted, properties: ["pet_id": pet.id.uuidString])
         await syncWidgetSnapshot()
     }
 
@@ -818,14 +904,13 @@ final class AppState: ObservableObject {
     func signOut() async {
         stopSyncingExpressions()
         MessageScheduler.shared.cancelBeenGoneNotifications()
+        PushNotificationService.logout()
+        await SubscriptionService.logOut()
+        AnalyticsService.capture(AnalyticsEvent.signOut)
+        AnalyticsService.reset()
         try? await SupabaseService.shared.client.auth.signOut(scope: .global)
-        OnboardingDraftStore.clear()
+        clearAllPersistedUserData()
         applyUnauthenticatedState()
-        setHasCompletedOnboarding(false)
-        setUserDisplayName("")
-        setUserEmail("")
-        setUserPhone("")
-        WidgetSnapshotSync.clear()
     }
 
     /// Permanently deletes the account on the server and clears all local state.
@@ -833,18 +918,16 @@ final class AppState: ObservableObject {
         let petIds = pets.map(\.id)
         stopSyncingExpressions()
         MessageScheduler.shared.cancelBeenGoneNotifications()
+        PushNotificationService.logout()
+        await SubscriptionService.logOut()
+        AnalyticsService.reset()
         try await supabase.deleteAccount()
         for petId in petIds {
             ChatHistoryStore.clearHistory(for: petId)
         }
-        OnboardingDraftStore.clear()
         try? await SupabaseService.shared.client.auth.signOut(scope: .global)
+        clearAllPersistedUserData()
         applyUnauthenticatedState()
-        setHasCompletedOnboarding(false)
-        setUserDisplayName("")
-        setUserEmail("")
-        setUserPhone("")
-        WidgetSnapshotSync.clear()
     }
 
     /// After kicking off `generate-sprites`, the edge function returns once

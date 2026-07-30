@@ -191,6 +191,10 @@ struct ChatPanel: View {
             messages.append(userMsg)
         }
         inputText = ""
+        AnalyticsService.capture(
+            AnalyticsEvent.chatMessageSent,
+            properties: ["pet_id": pet.id.uuidString]
+        )
         Task { await getPetReply(to: text) }
     }
 
@@ -212,6 +216,10 @@ struct ChatPanel: View {
                     messages.append(petMsg)
                 }
                 syncWidget(petMessage: petMsg)
+                AnalyticsService.capture(
+                    AnalyticsEvent.chatReplyReceived,
+                    properties: ["pet_id": pet.id.uuidString]
+                )
             }
         } catch {
 #if DEBUG

@@ -15,7 +15,8 @@ struct HomeLocationSetupView: View {
     @State private var homeSaved = false
     @State private var skippedHome = false
     @State private var homeError: String?
-    @State private var showSaveHomePrompt = false
+    @State private var showAddressSheet = false
+    @State private var isSavingHome = false
     @State private var titleHeight: CGFloat = 0
 
     private var resolvedPet: Pet? {
@@ -86,11 +87,11 @@ struct HomeLocationSetupView: View {
                 LocationTrackingPrimaryButton(
                     title: locationButtonTitle,
                     subtitle: locationButtonSubtitle,
-                    isLoading: isSettingUp,
+                    isLoading: isSettingUp || isSavingHome,
                     isEnabled: !homeSaved,
                     action: enableLocationTracking
                 )
-                .disabled(isSettingUp || resolvedPet == nil || homeSaved)
+                .disabled(isSettingUp || isSavingHome || resolvedPet == nil || homeSaved)
 
                 Button("Skip for now") {
                     skippedHome = true
@@ -100,7 +101,7 @@ struct HomeLocationSetupView: View {
                 .font(.bodyM)
                 .foregroundStyle(palette.textSecondary)
                 .frame(maxWidth: .infinity)
-                .disabled(isSettingUp)
+                .disabled(isSettingUp || isSavingHome)
 
                 if let onCancel {
                     PMOnboardingCancelButton(action: onCancel)
@@ -111,16 +112,21 @@ struct HomeLocationSetupView: View {
             .background(Color.clear)
         }
         .pmOnboardingScreenTitle("", titleTopPadding: 0)
-        .alert("Save your current location as home?", isPresented: $showSaveHomePrompt) {
-            Button("Save current location") { saveHomeFromPrompt() }
-            Button("Not now", role: .cancel) { onDone() }
-        } message: {
-            Text("Save your current location as \(resolvedPet?.name ?? "your pet")'s home so they can react when you leave and come back. You can change this anytime in settings.")
+        .sheet(isPresented: $showAddressSheet) {
+            HomeAddressSearchSheet(
+                petName: resolvedPet?.name ?? "your pet",
+                initialAddress: resolvedPet?.homeAddress
+            ) { resolved in
+                if let resolvedPet {
+                    saveResolvedHome(resolved, for: resolvedPet)
+                }
+            }
         }
     }
 
     private var locationButtonTitle: String {
         if isSettingUp { return "setting up location…" }
+        if isSavingHome { return "saving home…" }
         if homeSaved { return "home location saved" }
         return "turn on location tracking"
     }
@@ -148,9 +154,10 @@ struct HomeLocationSetupView: View {
                     return
                 }
 
-                // Permission granted — turn tracking on, then ask before capturing home.
+                // Permission granted — turn tracking on, then ask for an explicit home address.
                 locationService.setLocationTrackingEnabled(true)
-                showSaveHomePrompt = true
+                AnalyticsService.capture(AnalyticsEvent.locationTrackingEnabled)
+                showAddressSheet = true
             } catch let error as HomeLocationError {
                 homeError = error.errorDescription
             } catch {
@@ -159,22 +166,21 @@ struct HomeLocationSetupView: View {
         }
     }
 
-    private func saveHomeFromPrompt() {
-        guard let resolvedPet else {
-            onDone()
-            return
-        }
+    private func saveResolvedHome(_ resolved: ResolvedHomeAddress, for pet: Pet) {
         homeError = nil
-        isSettingUp = true
+        isSavingHome = true
         Task {
-            defer { isSettingUp = false }
+            defer { isSavingHome = false }
             do {
-                try await locationService.saveCurrentLocationAsHome(
-                    petId: resolvedPet.id,
-                    petName: resolvedPet.name,
+                try await locationService.saveResolvedHome(
+                    petId: pet.id,
+                    petName: pet.name,
+                    address: resolved.displayAddress,
+                    lat: resolved.latitude,
+                    lng: resolved.longitude,
                     requestPermissions: false
-                ) { lat, lng in
-                    appState.updatePetHome(petId: resolvedPet.id, lat: lat, lng: lng)
+                ) { lat, lng, address in
+                    appState.updatePetHome(petId: pet.id, lat: lat, lng: lng, address: address)
                 }
                 homeSaved = true
                 homeError = nil

@@ -13,7 +13,7 @@ struct SettingsView: View {
     @State private var isSavingPetName = false
     @State private var petNameError: String?
     @FocusState private var isPetNameFocused: Bool
-    @State private var notificationsEnabled = UserDefaults.standard.bool(forKey: "notifications_enabled")
+    @State private var notificationsEnabled = UserDefaults.standard.object(forKey: "notifications_enabled") as? Bool ?? true
     @State private var isRegenerating = false
     @State private var regenerateError: String?
     @State private var regenerateSuccess = false
@@ -26,7 +26,7 @@ struct SettingsView: View {
     @State private var deleteAccountError: String?
     @State private var showSignOutConfirm = false
     @State private var showWidgetInstructions = false
-    @State private var showSaveHomePrompt = false
+    @State private var showHomeAddressSheet = false
     @State private var isUpdatingHome = false
     @State private var homeLocationError: String?
     @ObservedObject private var locationService = LocationService.shared
@@ -108,7 +108,13 @@ struct SettingsView: View {
         .tint(palette.accentDark)
         .onAppear {
             syncPetNameFieldsFromCurrentPet()
-            Task { await appState.refreshProfileIfNeeded() }
+            Task {
+                await appState.refreshProfileIfNeeded()
+                if let profile = try? await SupabaseService.shared.fetchProfile() {
+                    notificationsEnabled = profile.notificationsEnabled
+                    UserDefaults.standard.set(profile.notificationsEnabled, forKey: "notifications_enabled")
+                }
+            }
         }
         .onChange(of: appState.currentPet?.id) { _, _ in
             syncPetNameFieldsFromCurrentPet()
@@ -139,13 +145,13 @@ struct SettingsView: View {
         } message: {
             Text("Change \(committedPetName)'s name to \(pendingPetName)?")
         }
-        .alert("Set \(pet?.name ?? "your pet")'s home?", isPresented: $showSaveHomePrompt) {
-            Button("Save current location") {
-                updateHomeLocation()
+        .sheet(isPresented: $showHomeAddressSheet) {
+            HomeAddressSearchSheet(
+                petName: pet?.name ?? "your pet",
+                initialAddress: pet?.homeAddress
+            ) { resolved in
+                saveResolvedHome(resolved)
             }
-            Button("Not now", role: .cancel) {}
-        } message: {
-            Text("Save your current location as home so \(pet?.name ?? "your pet") can react when you leave and come back. You can change this anytime in settings.")
         }
         .alert("Regenerate sprites?", isPresented: $showRegenerateConfirm) {
             Button("Regenerate") {
@@ -352,6 +358,11 @@ struct SettingsView: View {
                     Text("Location tracking is off.")
                         .font(.bodyM)
                         .foregroundStyle(palette.textSecondary)
+                } else if let address = pet?.homeAddress, !address.isEmpty {
+                    Text(address)
+                        .font(.bodyM)
+                        .foregroundStyle(palette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if pet?.homeLat != nil, pet?.homeLng != nil {
                     Text("Home is set for leave-home messages.")
                         .font(.bodyM)
@@ -363,7 +374,7 @@ struct SettingsView: View {
                 }
 
                 Button {
-                    updateHomeLocation()
+                    showHomeAddressSheet = true
                 } label: {
                     Text(isUpdatingHome ? "updating home…" : "update home location")
                         .font(.bodyL)
@@ -391,6 +402,9 @@ struct SettingsView: View {
                 .tint(palette.accent)
                 .onChange(of: notificationsEnabled) { _, enabled in
                     UserDefaults.standard.set(enabled, forKey: "notifications_enabled")
+                    Task {
+                        try? await SupabaseService.shared.updateNotificationsEnabled(enabled)
+                    }
                 }
         }
 
@@ -531,14 +545,14 @@ struct SettingsView: View {
         }
     }
 
-    /// Right after location tracking is switched on (off → on), offer to capture the current
-    /// location as home. Declining is fine; they can set it later via "update home location" below.
+    /// Right after location tracking is switched on (off → on), prompt for an explicit home address.
+    /// Declining (dismissing the sheet) is fine; they can set it later via "update home location".
     private func handleLocationTrackingEnabled() {
         guard pet != nil else { return }
-        showSaveHomePrompt = true
+        showHomeAddressSheet = true
     }
 
-    private func updateHomeLocation() {
+    private func saveResolvedHome(_ resolved: ResolvedHomeAddress) {
         guard let pet else {
             homeLocationError = "No pet loaded."
             return
@@ -548,11 +562,14 @@ struct SettingsView: View {
         Task {
             defer { isUpdatingHome = false }
             do {
-                try await locationService.saveCurrentLocationAsHome(
+                try await locationService.saveResolvedHome(
                     petId: pet.id,
-                    petName: pet.name
-                ) { lat, lng in
-                    appState.updateCurrentPetHome(lat: lat, lng: lng)
+                    petName: pet.name,
+                    address: resolved.displayAddress,
+                    lat: resolved.latitude,
+                    lng: resolved.longitude
+                ) { lat, lng, address in
+                    appState.updateCurrentPetHome(lat: lat, lng: lng, address: address)
                 }
             } catch {
                 homeLocationError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -937,6 +954,13 @@ struct RegeneratingModal: View {
                 appState.startSyncingExpressions(petId: pet.id)
                 success = true
                 phase = .done
+                AnalyticsService.capture(
+                    AnalyticsEvent.spritesGenerated,
+                    properties: [
+                        "source": "settings",
+                        "pet_id": pet.id.uuidString,
+                    ]
+                )
             }
         } catch {
             await MainActor.run {
